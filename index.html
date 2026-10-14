@@ -107,6 +107,7 @@ tr.off td{opacity:.45}
 
   <section class="card actions">
     <button class="btn primary" id="gen" type="button" disabled>Generar Acta</button>
+    <button class="btn" id="nueva" type="button" style="padding:12px 22px;font-size:16px;font-weight:600">Nueva acta</button>
     <p class="hint" id="genHint">Completa los datos y carga el Excel para habilitar el botón.</p>
   </section>
 </main>
@@ -638,7 +639,8 @@ function parse(buf,name){
     if(!ubic&&!ref)continue;
     const cont=num(g(row,'cont')), sist=num(g(row,'sist'));
     const difRaw=g(row,'dif'); const dif=(difRaw===null||difRaw==='')?r2(cont-sist):num(difRaw);
-    rows.push({ubic,ref,desc:String(g(row,'desc')??'').replace(/ /g,' ').trim(),cont,sist,dif,
+    const esp=ix.sist>=0?sist:r2(cont-dif);
+    rows.push({esp,ubic,ref,desc:String(g(row,'desc')??'').replace(/ /g,' ').trim(),cont,sist,dif,
       com:String(g(row,'com')??'').trim(),tipo:String(g(row,'tipo')??'').trim(),
       novm2:num(g(row,'novm2')),contm2:num(g(row,'contm2')),costo:num(g(row,'costo')),
       costoNov:g(row,'costoNov'),line:r+1});
@@ -704,15 +706,19 @@ function compute(){
   const ubi=novs.filter(n=>n.tipoSel==='Error de ubicación');
   const reales=novs.filter(n=>(n.tipoSel==='Sobrante'||n.tipoSel==='Faltante')&&Math.abs(n.costoFinal)>=0.005);
   const realS=reales.filter(n=>n.tipoSel==='Sobrante').length, realF=reales.filter(n=>n.tipoSel==='Faltante').length;
-  const ubiFuera=novs.filter(n=>n.tipoSel==='Error de ubicación'||((n.tipoSel==='Faltante'||n.tipoSel==='Sobrante')&&Math.abs(n.dif)<1e-9&&/ubicacion/.test(norm(n.com))));
+  const ubiUnid=r2(novs.filter(n=>n.tipoSel==='Error de ubicación').reduce((a,n)=>a+Math.abs(n.dif),0));
+  const totUnid=rows.reduce((a,x)=>a+x.cont,0);
   const costoS=sob.reduce((a,n)=>a+n.costoFinal,0), costoF=fal.reduce((a,n)=>a+n.costoFinal,0);
   const neto=novs.reduce((a,n)=>a+n.costoFinal,0);
   const total=rows.length;
   const ubics=[...new Set(rows.map(r=>r.ubic).filter(Boolean))].sort(natCmp);
   return {rows,novs,total,unidades:rows.reduce((a,x)=>a+x.cont,0),valor:rows.reduce((a,x)=>a+x.costo,0),
-    sob:sob.length,fal:fal.length,costoS,costoF,neto,ubics,
+    sob:r2(novs.filter(n=>n.dif>0).reduce((a,n)=>a+n.dif,0)),fal:r2(novs.filter(n=>n.dif<0).reduce((a,n)=>a-n.dif,0)),difTot:r2(novs.reduce((a,n)=>a+Math.abs(n.dif),0)),
+    ...(()=>{const ab=n=>Math.abs(n.dif), su=(l,f)=>r2(l.reduce((a,n)=>a+f(n),0));
+      const ub=novs.filter(n=>n.tipoSel==='Error de ubicación'), aj=novs.filter(n=>n.tipoSel!=='Error de ubicación');
+      return {aSob:su(aj.filter(n=>n.dif>0),ab),aFal:su(aj.filter(n=>n.dif<0),ab),uSob:su(ub.filter(n=>n.dif>0),ab),uFal:su(ub.filter(n=>n.dif<0),ab)};})(),costoS,costoF,neto,ubics,
     exG:1-reales.length/total,realN:reales.length,realS,realF,
-    exU:1-ubiFuera.length/total,ubiN:ubiFuera.length};
+    exU:totUnid>0?Math.max(0,1-ubiUnid/totUnid):1,ubiN:ubiUnid};
 }
 function fechaLarga(iso){
   const [y,m,d]=iso.split('-').map(Number);const dt=new Date(y,m-1,d);
@@ -720,6 +726,16 @@ function fechaLarga(iso){
 }
 
 /* ---------- PDF ---------- */
+$('nueva').onclick=()=>{
+  if(data&&!confirm('¿Empezar una nueva acta? Se borrarán el Excel cargado y las novedades revisadas.'))return;
+  data=null;$('acta').value='';
+  const t=new Date();$('fecha').value=new Date(t.getTime()-t.getTimezoneOffset()*6e4).toISOString().slice(0,10);
+  const la=store.get('acta_no');$('acta').placeholder=la?'Última: '+la:'Ej. 1273';
+  $('summary').hidden=true;$('novBody').innerHTML='';$('msgs').innerHTML='';
+  $('dropTitle').textContent='Haz clic o arrastra aquí el archivo .xlsx';
+  $('dropSub').textContent='Columnas esperadas: Posición de ubicación, Número de artículo, Descripción, Contado, Diferencia, Comentarios, Costo items contados…';
+  check();window.scrollTo({top:0,behavior:'smooth'});$('acta').focus();
+};
 $('gen').onclick=()=>{try{makePdf()}catch(err){console.error(err);showMsgs([['err','Error generando el PDF: '+err.message]]);}};
 function makePdf(){
   const {jsPDF}=window.jspdf;
@@ -736,7 +752,7 @@ function makePdf(){
   doc.addImage(LOGO,'JPEG',492,52,57,40.6);
   let y=108;
   const field=(lab,val,vx=VX,boldVal=false)=>{F('bold',FS);doc.text(lab,L,y);F(boldVal?'bold':'normal',FS);
-    const lines=doc.splitTextToSize(String(val),R-vx);doc.text(lines,vx,y);y+=Math.max(1,lines.length)*11.5+6.5;};
+    const lines=doc.splitTextToSize(String(val),R-vx);doc.text(lines,vx,y);y+=Math.max(1,lines.length)*11.5+4.5;};
   field('Acta No:',actaNo);
   field('Fecha:',fechaLarga($('fecha').value));
   field('Lugar / Bodega:',sede);
@@ -747,21 +763,26 @@ function makePdf(){
   F('bold',FS);doc.text('Alcance:',L,y);y+=16;
   const ub=C.ubics.length<=24?C.ubics.join(', '):`${C.ubics[0]} a ${C.ubics[C.ubics.length-1]} (${C.ubics.length} ubicaciones)`;
   field('Ubicaciones incluidas:',ub);
-  field('Total unidades contadas:',fmtN(C.unidades),VX,true);
   y+=4;F('bold',FS);doc.text('Resultados:',L,y);y+=8;
 
+  const sub=t=>[{content:t,colSpan:2,styles:{fontStyle:'bold',fillColor:[238,238,238]}}];
+  const ind=t=>({content:t,styles:{cellPadding:{top:1.2,bottom:1.2,left:14,right:4}}});
   const res=[
+    ['Total unidades esperadas',fmtN(r2(C.rows.reduce((a,x)=>a+x.esp,0)))],
     ['Total unidades contadas',fmtN(C.unidades)],
-    ['Total diferencias encontradas',fmtN(C.novs.length)],
-    ['Sobrantes',fmtN(C.sob)],
-    ['Faltantes',fmtN(C.fal)],
-    ['Costo total de sobrantes',money(C.costoS)],
-    ['Costo total de faltantes',money(C.costoF)],
-    ['Impacto neto (Sobrantes + Faltantes)',money(C.neto)],
     ['Valor total de las referencias inventariadas (costo de sistema)',money(C.valor)],
+    sub('Novedades con ajustes en sistema'),
+    [ind('Sobrantes (unidades)'),fmtN(C.aSob)],
+    [ind('Faltantes (unidades)'),fmtN(C.aFal)],
+    [ind('Costo total de sobrantes'),money(C.costoS)],
+    [ind('Costo total de faltantes'),money(C.costoF)],
+    [{content:'Impacto neto ajustes',styles:{fontStyle:'bold',cellPadding:{top:1.2,bottom:1.2,left:14,right:4}}},{content:money(C.neto),styles:{fontStyle:'bold'}}],
+    sub('Novedades de almacenamiento'),
+    [ind('Sobrantes (unidades)'),fmtN(C.uSob)],
+    [ind('Faltantes (unidades)'),fmtN(C.uFal)],
   ];
   doc.autoTable({startY:y,head:[['Concepto','Valor']],body:res,theme:'grid',margin:{left:136,right:136},tableWidth:340,
-    styles:{font:'Carlito',fontSize:FS-0.5,cellPadding:{top:1.6,bottom:1.6,left:4,right:4},textColor:0,lineColor:0,lineWidth:0.6},
+    styles:{font:'Carlito',fontSize:FS-0.5,cellPadding:{top:1.2,bottom:1.2,left:4,right:4},textColor:0,lineColor:0,lineWidth:0.6},
     headStyles:{fillColor:false,fontStyle:'bold',halign:'center'},
     columnStyles:{0:{cellWidth:250},1:{halign:'center'}}});
   y=doc.lastAutoTable.finalY+18;
@@ -770,8 +791,8 @@ function makePdf(){
     const d=doc.splitTextToSize(desc,R-272);doc.text(d,272,y);y+=Math.max(1,d.length)*10.5+7;};
   metric('Exactitud Global (Físico vs. SAP):',pct(C.exG),C.realN===0?'Cero faltantes/sobrantes reales. No requiere ajuste contable.':
     `${C.realN} referencia${C.realN>1?'s':''} con diferencia real (${C.realS} sobrante${C.realS===1?'':'s'}, ${C.realF} faltante${C.realF===1?'':'s'}). Impacto neto ${money(C.neto)}.`);
-  metric('Exactitud de Almacenamiento / Ubicación:',pct(C.exU),C.ubiN===0?'Todos los ítems se encontraron en su ubicación asignada.':
-    `${C.ubiN} ítem${C.ubiN>1?'s':''} encontrado${C.ubiN>1?'s':''} fuera de su ubicación asignada.`);
+  metric('Exactitud de Almacenamiento / Ubicación:',pct(C.exU),C.ubiN===0?'Todas las unidades se encontraron en su ubicación asignada.':
+    `${fmtN(C.ubiN)} unidad${C.ubiN===1?'':'es'} encontrada${C.ubiN===1?'':'s'} fuera de su ubicación asignada.`);
   y+=6;F('bold',FS);doc.text('Detalle de diferencias:',L,y);y+=7;
 
   if(C.novs.length){
@@ -788,13 +809,30 @@ function makePdf(){
     F('normal',FS);doc.text('Sin diferencias: el conteo físico coincide con el sistema.',L,y+8);y+=8;
   }
 
+  // detalle de referencias contadas
+  y+=26;
+  if(y>H-120){doc.addPage();y=60;}
+  F('bold',FS);doc.text('Detalle de referencias contadas:',L,y);y+=7;
+  const refs=[...C.rows].sort((a,b)=>natCmp(a.ubic,b.ubic)||natCmp(a.ref,b.ref));
+  const tEsp=r2(refs.reduce((a,x)=>a+x.esp,0)), tCont=r2(refs.reduce((a,x)=>a+x.cont,0));
+  doc.autoTable({startY:y,theme:'grid',rowPageBreak:'avoid',margin:{left:L,right:W-R,top:50,bottom:50},
+    head:[['Ubicación','Referencia','Descripción de artículo','Cantidad esperada','Cantidad contada']],
+    body:refs.map(x=>[x.ubic,x.ref,x.desc,fmtN(x.esp),fmtN(x.cont)]),
+    foot:[[{content:'Total',colSpan:3,styles:{halign:'right'}},fmtN(tEsp),fmtN(tCont)]],
+    showFoot:'lastPage',
+    styles:{font:'Carlito',fontSize:7.8,cellPadding:2.2,textColor:0,lineColor:0,lineWidth:0.6,valign:'middle',overflow:'linebreak'},
+    headStyles:{fillColor:false,fontStyle:'bold',valign:'top',fontSize:8.2},
+    footStyles:{fillColor:false,textColor:0,fontStyle:'bold',halign:'center'},
+    columnStyles:{0:{cellWidth:60,halign:'center'},1:{cellWidth:78,halign:'center'},2:{cellWidth:'auto'},3:{cellWidth:62,halign:'center'},4:{cellWidth:62,halign:'center'}}});
+  y=doc.lastAutoTable.finalY;
+
   // firmas (espacios en blanco)
-  const perRow=2, blockH=66, colX=[L+40,L+262];
+  const perRow=2, blockH=60, colX=[L+40,L+262];
   const rowsNeeded=Math.ceil(rs.length/perRow);
-  y+=18;
-  if(y+rowsNeeded*blockH>H-42){doc.addPage();y=70;}
+  y+=12;
+  if(y+rowsNeeded*blockH>H-40){doc.addPage();y=70;}
   rs.forEach((r,i)=>{
-    const x=colX[i%perRow], yy=y+Math.floor(i/perRow)*blockH+38;
+    const x=colX[i%perRow], yy=y+Math.floor(i/perRow)*blockH+32;
     doc.setLineWidth(0.6);doc.line(x,yy,x+175,yy);
     F('bold',FS);doc.text(r.c.trim()||' ',x,yy+12);
     F('normal',FS);doc.text(r.n.trim(),x,yy+24);
